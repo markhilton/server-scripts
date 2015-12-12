@@ -9,12 +9,24 @@
  * @see http://www.jimwestergren.com/wordpress-with-redis-as-a-frontend-cache/
  */
 
+logger(str_repeat('-', 100));
+logger('Starting Redis caching engine connection...');
+
 // do not run if explicitly requested
 #if (isset($_GET['nocache']) or (isset($_SERVER['HTTP_CACHE_CONTROL']) && $_SERVER['HTTP_CACHE_CONTROL'] == 'max-age=0')) {
 if (isset($_GET['nocache'])) {
+    logger('NOCACHE explicitly requested. terminating...');
+
     header('Redis-cache: no cach requested');
-    require 'index.php';
-    die();
+    die(require 'index.php');
+}
+
+// do not run if request is a POST or user is logged into WordPress
+if ($_POST or preg_match("/wordpress_logged_in/", var_export($_COOKIE, true))) {
+    logger('NOCACHE explicitly requested. terminating...');
+
+    header('Redis-cache: cache disengaged');
+    die(require 'index.php');
 }
 
 
@@ -27,26 +39,33 @@ if (isset($_GET['nocache'])) {
  *
  */
 
-define('REDIS_CACHE_DEBUG', true);        // set to 1 if you wish to see execution time and cache actions
-define('REDIS_CACHE_START', microtime()); // start timing page exec
-
 try {
     $redis = new Redis();
-    $redis->connect('redis.host', 6379, 1); // 1 sec timeout
+    $connect = $redis->connect('redis.host', 6379, 1); // 1 sec timeout
 }
 // terminate script if cannot connect to Redis server
 // and gracefully fall back into regular WordPress
-catch (Predis\CommunicationException $exception) {
-    require 'index.php';
-    die();
+catch (Exception $e) {
+    logger('redis extension failed. terminating...');
+    
+    die(require 'index.php');
+}
+
+if ($connect) {
+    logger('connected to Redis cache OK. retrieving domains list');
+} else {
+    logger('connection to Redis cache FAILED. terminating...');    
+    die(require 'index.php');
 }
 
 $redis->select(0);
-$domains = $redis->get('domains');
+$domains = json_decode($redis->get('domains'), true);
 
 // fetch redis database ID for current host
 if (isset($domains[ $_SERVER['HTTP_HOST'] ]['id'])) {
     $db = $domains[ $_SERVER['HTTP_HOST'] ]['id'];
+
+    logger(sprintf('current domain [id: %d]: %s found in cache. Total domains stored: %d', $db, $_SERVER['HTTP_HOST'], count($domains)));
     
     $redis->select($db);
 }
@@ -61,14 +80,16 @@ else {
 
     $domains[ $_SERVER['HTTP_HOST'] ]['id'] = $db;
 
-    $redis->set('domains', $domains);
+    logger(sprintf('current domain: %s does not exist in cache - creating. Total domains stored: %d', $_SERVER['HTTP_HOST'], count($domains)));
+
+    $redis->set('domains', json_encode($domains));
 
     $redis->select($db);
-
-    // build URL key
-    $url = isset($domains[ $_SERVER['HTTP_HOST'] ]['cache_query']) ? $_SERVER['REQUEST_URI'] : strtok($_SERVER['REQUEST_URI'], '?');
-    $key = md5($url);
 }
+
+// build URL key
+$url = isset($domains[ $_SERVER['HTTP_HOST'] ]['cache_query']) ? $_SERVER['REQUEST_URI'] : strtok($_SERVER['REQUEST_URI'], '?');
+$key = md5($url);
 
 
 /**
@@ -82,12 +103,14 @@ if (isset($_GET['flush'])) {
     $redis->del($key);
 
     header('Redis-cache: flushed page cache');
+    logger('flushing page cache requestes');
 }
 
 if (isset($_GET['flushall'])) {
     $redis->flushDb();
 
     header('Redis-cache: flushed domain cache');
+    logger('flushing domain cache requestes');
 }
 
 if (isset($_GET['flush']) or isset($_GET['flushall'])) {
@@ -96,27 +119,18 @@ if (isset($_GET['flush']) or isset($_GET['flushall'])) {
 
 
 /**
- * execute redis flush requests
+ * cache requests and server cached content
  *
- * 1. execute page flush
- * 2. execute domain flush
+ * 1. serve cached content if url key found
+ * 2. store content into cache if url key does not exist
  *
  */
-$post     = $_POST ? true : false;
-$loggedin = preg_match("/wordpress_logged_in/", var_export($_COOKIE, true));
 
 // check if a cache of the page exists
-if ($redis->exists($key) && !$loggedin && !$post) {
+if ($redis->exists($key)) {
     header('Redis-cache: fetched from cache');
+    logger('fetching content from the cache. key: '.$key);
     die($redis->get($key));
-}
-
-
-// if logged in don't cache anything
-if ($post or $loggedin) {
-    header('Redis-cache: cache disengaged');
-
-    die(require 'index.php');
 }
 
 // cache the page
@@ -130,9 +144,20 @@ else {
     $html = ob_get_flush();
 
     // log syslog message if cannot store objects in redis
+    logger('storing content in the cache. page count: '.$redis->dbSize());
+
     if (! $redis->set($key, $html)) {
+        logger('Redis cannot store data. Memory: '.$redis->info('used_memory_human'));
+
         openlog('php', LOG_CONS | LOG_NDELAY | LOG_PID, LOG_USER | LOG_PERROR);
         syslog(LOG_INFO, 'Redis cannot store data. Memory: '.$redis->info('used_memory_human'));
         closelog();
+    }
+}
+
+
+function logger($message) {
+    if (file_exists('/tmp/.redis.log')) {
+        syslog(LOG_INFO, $message);
     }
 }
