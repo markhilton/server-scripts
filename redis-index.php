@@ -66,8 +66,6 @@ if (isset($domains[ $_SERVER['HTTP_HOST'] ]['id'])) {
     $db = $domains[ $_SERVER['HTTP_HOST'] ]['id'];
 
     logger(sprintf('current domain [id: %d]: %s found in cache. Total domains stored: %d', $db, $_SERVER['HTTP_HOST'], count($domains)));
-    
-    $redis->select($db);
 }
 
 // create new redis database if current host does not have one
@@ -83,13 +81,13 @@ else {
     logger(sprintf('current domain: %s does not exist in cache - creating. Total domains stored: %d', $_SERVER['HTTP_HOST'], count($domains)));
 
     $redis->set('domains', json_encode($domains));
-
-    $redis->select($db);
 }
+
+$redis->select($db);
 
 // build URL key
 $url = isset($domains[ $_SERVER['HTTP_HOST'] ]['cache_query']) ? $_SERVER['REQUEST_URI'] : strtok($_SERVER['REQUEST_URI'], '?');
-$key = md5($url);
+$key = md5($_SERVER['HTTP_HOST'].$url);
 
 
 /**
