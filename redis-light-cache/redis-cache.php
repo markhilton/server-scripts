@@ -39,6 +39,56 @@ function admin_menu_rediscache()
     add_menu_page('Redis Cache', 'Redis Cache', 4, 'rediscache', 'options_page_rediscache', $icon_url, 4);
 }
 
+// add page cache flush on post save / update
+add_action('save_post', 'flush_page');
+
+function flush_page($post_id) {
+    $permalink = get_permalink($post_id);
+
+    try {
+        $redis   = new Redis();
+        $connect = $redis->connect('redis.host', 6379, 1); // 1 sec timeout
+    }
+    // terminate script if cannot connect to Redis server
+    // and gracefully fall back into regular WordPress
+    catch (Exception $e) {
+        return;
+    }
+
+    if (! $connect) {
+        return;
+    }
+
+    $redis->select(0);
+    $domains = json_decode($redis->get('domains'), true);
+
+    // fetch redis database ID for current host
+    if (isset($domains[ $_SERVER['HTTP_HOST'] ]['id'])) {
+        $db = $domains[ $_SERVER['HTTP_HOST'] ]['id'];
+    }
+
+    // create new redis database if current host does not have one
+    else {
+        if (! is_array($domains)) {
+            $domains = [];
+        }
+
+        $db = count($domains) + 1;
+
+        $domains[ $_SERVER['HTTP_HOST'] ]['id'] = $db;
+
+        $redis->set('domains', json_encode($domains));
+    }
+
+    $redis->select($db);
+
+    // build URL key
+    $url = $_SERVER['HTTP_HOST'].parse_url($permalink, PHP_URL_PATH);
+    $key = md5($url);
+
+    $redis->delete($key); # die($key.' - '.$url); // DEBUG
+}
+
 function options_page_rediscache()
 {
     try {

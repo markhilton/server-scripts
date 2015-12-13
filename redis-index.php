@@ -1,6 +1,6 @@
 <?php
 /**
- * WP Redix Index
+ * WordPress Redis Index
  * 
  * Redis caching system for WordPress. Inspired by Jim Westergren & Jeedo Aquino
  * 
@@ -89,6 +89,7 @@ $redis->select($db);
 $url = isset($domains[ $_SERVER['HTTP_HOST'] ]['cache_query']) ? $_SERVER['REQUEST_URI'] : strtok($_SERVER['REQUEST_URI'], '?');
 $key = md5($_SERVER['HTTP_HOST'].$url);
 
+logger(sprintf('requested URI: %s, key: %s', $url, $key));
 
 /**
  * execute redis flush requests
@@ -134,28 +135,35 @@ if ($redis->exists($key)) {
 // cache the page
 else {
     header('Redis-cache: storing new data');
-
-    ob_start();
-
+    ob_start('callback');
     require 'index.php';
+    ob_end_flush();
+    logger('flushing output buffer to the browser'); 
+}
 
-    $html = ob_get_flush();
+function logger($message) {
 
-    // log syslog message if cannot store objects in redis
-    logger('storing content in the cache. page count: '.$redis->dbSize());
+    global $cc;
 
-    if (! $redis->set($key, $html)) {
+    if (file_exists('.redis.log') or file_exists('/tmp/.redis.log')) {
+        syslog(LOG_INFO, sprintf('STEP %d: %s', ++$cc, $message));
+    }
+}
+
+function callback($buffer) {
+
+    global $redis, $key;
+
+    if ($redis->set($key, $buffer)) {
+        // log syslog message if cannot store objects in redis
+        logger('storing content in the cache. page count: '.$redis->dbSize());        
+    } else {
         logger('Redis cannot store data. Memory: '.$redis->info('used_memory_human'));
 
         openlog('php', LOG_CONS | LOG_NDELAY | LOG_PID, LOG_USER | LOG_PERROR);
         syslog(LOG_INFO, 'Redis cannot store data. Memory: '.$redis->info('used_memory_human'));
         closelog();
     }
-}
 
-
-function logger($message) {
-    if (file_exists('/tmp/.redis.log')) {
-        syslog(LOG_INFO, $message);
-    }
+    return $buffer;
 }
