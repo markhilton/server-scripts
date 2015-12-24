@@ -16,7 +16,7 @@
 
 for i in "${firewall[@]}"
 do
-    /sbin/iptables -A INPUT -p tcp -s $i -j ACCEPT
+    /sbin/iptables -A INPUT -s $i -j ACCEPT
 done
 
 

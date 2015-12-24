@@ -1,0 +1,10 @@
+google_bucket=google_bucket_name
+backups_path="/var/backups"
+vhosts_path="/var/www/vhosts"
+gsutil=/root/google-cloud-sdk/bin/gsutil
+
+# allow access from
+firewall=(
+	10.0.0.0/24		# local
+	134.130.90.250 		# Allow
+)
