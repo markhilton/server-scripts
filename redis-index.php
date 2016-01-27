@@ -154,7 +154,7 @@ function callback($buffer) {
 
     global $redis, $key;
 
-    if ($redis->set($key, $buffer)) {
+    if (trim($buffer) != '' and $redis->set($key, $buffer)) {
         // log syslog message if cannot store objects in redis
         logger('storing content in the cache. page count: '.$redis->dbSize());        
     } else {
