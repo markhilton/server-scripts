@@ -29,4 +29,4 @@ done
 
 /sbin/iptables-save > /etc/iptables/rules.v4
 /etc/init.d/iptables-persistent restart
-
+/etc/init.d/netfilter-persistent restart
